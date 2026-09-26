@@ -1,20 +1,19 @@
 import { useState, useEffect, useMemo } from "react";
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
+// Browser-safe persistence for the standalone website.
+// The original prototype expected a host-provided storage API;
+// a normal Vite website does not provide that API, so use localStorage.
 const storage = {
   async get(key) {
     const value = localStorage.getItem(key);
     return value === null ? null : { value };
   },
-
   async set(key, value) {
     localStorage.setItem(key, value);
-    return { value };
   },
-
   async delete(key) {
     localStorage.removeItem(key);
-    return { value: null };
   },
 };
 
