@@ -1,9 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
-
-// Browser-safe persistence for the standalone website.
-// The original prototype expected a host-provided storage API;
-// a normal Vite website does not provide that API, so use localStorage.
+// Browser storage adapter (replaces the preview-only window.storage API)
 const storage = {
   async get(key) {
     const value = localStorage.getItem(key);
@@ -11,11 +6,16 @@ const storage = {
   },
   async set(key, value) {
     localStorage.setItem(key, value);
+    return { value };
   },
   async delete(key) {
     localStorage.removeItem(key);
+    return { value: null };
   },
 };
+
+import { useState, useEffect, useMemo, useRef } from "react";
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from "recharts";
 
 // ---------------------------------------------------------------------------
 // Static demo data. Nothing here is generated or randomized, so every run of
@@ -46,7 +46,70 @@ const INITIAL_NOTES = [
 ];
 
 const GRADES = ["6", "7", "8", "9", "10", "11", "12"];
-const SUBJECTS = ["Mathematics", "Science", "English", "Social Science", "Hindi", "Computer Applications"];
+const BOARDS = ["CBSE", "ICSE", "State Board"];
+const SUBJECTS = ["Mathematics", "Science", "English", "Social Science", "Regional Language", "Computer Applications"];
+
+// The 22 scheduled languages of India (Eighth Schedule) — selecting
+// "Regional Language" as a subject reveals this dropdown.
+const REGIONAL_LANGUAGES = [
+  "Assamese", "Bengali", "Bodo", "Dogri", "Gujarati", "Hindi", "Kannada",
+  "Kashmiri", "Konkani", "Maithili", "Malayalam", "Manipuri", "Marathi",
+  "Nepali", "Odia", "Punjabi", "Sanskrit", "Santali", "Sindhi", "Tamil",
+  "Telugu", "Urdu",
+];
+
+// Social Science, Class 10, NCERT — one flagship chapter ("Nationalism in
+// India") is fully built as a story-mode walkthrough; the rest are honest
+// stubs, same pattern as the Trigonometric Ratios flagship in Mathematics.
+const SOCIAL_SCIENCE_CHAPTERS = [
+  { id: "nationalism-india", name: "Nationalism in India", book: "History", built: true },
+  { id: "rise-nationalism-europe", name: "The Rise of Nationalism in Europe", book: "History", built: false },
+  { id: "print-culture", name: "Print Culture and the Modern World", book: "History", built: false },
+  { id: "resources-development", name: "Resources and Development", book: "Geography", built: false },
+  { id: "water-resources", name: "Water Resources", book: "Geography", built: false },
+  { id: "power-sharing", name: "Power Sharing", book: "Political Science", built: false },
+  { id: "federalism", name: "Federalism", book: "Political Science", built: false },
+  { id: "development", name: "Development", book: "Economics", built: false },
+  { id: "sectors-indian-economy", name: "Sectors of the Indian Economy", book: "Economics", built: false },
+];
+
+// The story scenes for "Nationalism in India" — written once, static, so
+// the demo is reliable and instant (same reasoning as the hardcoded Math
+// question banks: no AI latency risk on stage).
+const NATIONALISM_STORY = [
+  {
+    title: "A Nation Weary of War",
+    text: "It's 1919. India has just helped Britain win the First World War — over a million Indian soldiers served, and India paid heavily in money and lives. People expected relief. Instead, prices doubled, crops failed in some regions, and an influenza epidemic killed millions. Then came the Rowlatt Act, letting the British government jail people without trial. When peaceful crowds gathered in Amritsar to protest, General Dyer's troops opened fire in the enclosed Jallianwala Bagh, killing hundreds. Anger spread across the country like fire.",
+  },
+  {
+    title: "Gandhi's New Idea",
+    text: "Mahatma Gandhi believed there was a way to fight British rule without violence: Satyagraha, the force of truth. In 1920, he joined forces with Muslim leaders of the Khilafat movement, who were angry about the treatment of the Ottoman Caliph after the war. Together, they launched the Non-Cooperation Movement — Indians would refuse to cooperate with British rule at all: no government jobs, no British schools, no foreign cloth, no taxes. For the first time, a movement asked ordinary people, not just elites, to take part.",
+  },
+  {
+    title: "One Movement, Many Meanings",
+    text: "The movement spread — but people joined it for very different reasons. In the cities, students left colleges and lawyers gave up practice. In the countryside, peasants in Awadh refused to pay rent to oppressive landlords. In Bardoli, farmers organised against high taxes. Plantation workers in Assam, believing Gandhi's promise of freedom meant they could go home, simply left the plantations. Nationalism, in other words, meant something different to a lawyer in Bombay than to a peasant in a Awadh village — but Congress tried to weave all of it into one movement.",
+  },
+  {
+    title: "Chauri Chaura — and a Sudden Halt",
+    text: "In February 1922, in the small town of Chauri Chaura in Uttar Pradesh, a peaceful procession turned violent — an angry crowd set fire to a police station, killing the policemen inside. Gandhi, deeply committed to non-violence, was shaken. He believed the movement had turned violent because people weren't yet disciplined enough for mass struggle. He called off the Non-Cooperation Movement entirely — a controversial decision that surprised and frustrated many of his own followers, but one that showed how central non-violence was to his idea of freedom.",
+  },
+  {
+    title: "The Salt March",
+    text: "Nearly a decade later, in 1930, Gandhi found a new symbol to unite the country: salt. Under British law, Indians couldn't produce or sell salt — a substance every household needed — without paying a tax. On 12 March 1930, Gandhi set out on foot from Sabarmati Ashram, walking 240 kilometres over 24 days to the coastal village of Dandi. There, on 6 April, he broke the law by making salt from seawater. It was a small act with enormous meaning: it showed that a British law, however small, could be broken by ordinary people — and the Civil Disobedience Movement spread nationwide.",
+  },
+  {
+    title: "Building the Idea of 'India'",
+    text: "How do millions of people, speaking different languages and living in different regions, come to feel they belong to one nation? Artists painted Bharat Mata — Mother India — as a figure to be loved and protected. Folk songs and popular prints spread nationalist ideas even to people who couldn't read. The tricolour flag became a symbol carried at every protest. Slowly, through stories, symbols, and shared struggle, a sense of collective belonging was built — and that shared identity is what carried the freedom movement forward into the decades that followed.",
+  },
+];
+
+const NATIONALISM_QUIZ = [
+  { id: "ns1", q: "What event caused nationwide outrage and became a turning point in 1919?", options: ["The Jallianwala Bagh massacre", "The Salt March", "The Battle of Plassey", "The partition of Bengal"], correct: "The Jallianwala Bagh massacre" },
+  { id: "ns2", q: "The Non-Cooperation Movement was launched in alliance with which movement?", options: ["The Khilafat Movement", "The Quit India Movement", "The Swadeshi Movement", "The Home Rule Movement"], correct: "The Khilafat Movement" },
+  { id: "ns3", q: "Why did Gandhi call off the Non-Cooperation Movement in 1922?", options: ["The violence at Chauri Chaura", "The British agreed to Indian demands", "Lack of public support", "The First World War ended"], correct: "The violence at Chauri Chaura" },
+  { id: "ns4", q: "What law did Gandhi deliberately break during the Salt March?", options: ["The ban on Indians producing/selling salt without tax", "The Rowlatt Act", "The Arms Act", "The Vernacular Press Act"], correct: "The ban on Indians producing/selling salt without tax" },
+  { id: "ns5", q: "Which figure was used in nationalist art to represent India as a mother to be protected?", options: ["Bharat Mata", "Lakshmi", "Saraswati", "Durga"], correct: "Bharat Mata" },
+];
 
 const CHAPTERS = [
   { id: "number-systems", name: "Number Systems", mastery: 58 },
@@ -270,17 +333,27 @@ function readFileForNote(file) {
   });
 }
 
-const GEN_PROMPTS = {
-  notes: "Summarize the key concepts in this study material into clear, well-organized study notes for a Class 10 CBSE student. Use short headings and bullet points. Keep it under 300 words. Respond with plain text only — no markdown code fences, no preamble.",
-  formula: `Extract every formula, definition, or key fact from this study material relevant to a Class 10 CBSE student. Respond with ONLY a raw JSON array of strings, no markdown fences, no other text, at most 10 items. Example: ["formula or fact 1", "formula or fact 2"]`,
-  quiz: `Create exactly 5 multiple-choice questions testing understanding of this study material, appropriate for a Class 10 CBSE student. Respond with ONLY raw JSON, no markdown fences, no other text, in this exact shape: [{"q":"...","options":["...","...","...","..."],"correct":"..."}]. The "correct" value must exactly match one of the strings in "options".`,
-};
+async function callClaudeText(content) {
+  const resp = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, messages: [{ role: "user", content }] }),
+  });
+  const data = await resp.json();
+  return (data.content || []).map((b) => b.text || "").join("").trim();
+}
 
-async function generateFromNote(note, kind) {
+function buildGenInstruction(kind, grade, board) {
+  const ctx = `Class ${grade} ${board}`;
+  if (kind === "notes") return `Summarize the key concepts in this study material into clear, well-organized study notes for a ${ctx} student. Use short headings and bullet points. Keep it under 300 words. Respond with plain text only — no markdown code fences, no preamble.`;
+  return `Extract every formula, definition, or key fact from this study material relevant to a ${ctx} student. Respond with ONLY a raw JSON array of strings, no markdown fences, no other text, at most 10 items. Example: ["formula or fact 1", "formula or fact 2"]`;
+}
+
+async function generateFromNote(note, kind, grade, board) {
   if (!note || !note.contentKind || note.contentKind === "unsupported") return { status: "unsupported" };
   if (note.contentKind === "too-large") return { status: "too-large" };
 
-  const instruction = GEN_PROMPTS[kind];
+  const instruction = buildGenInstruction(kind, grade, board);
   let content;
   if (note.contentKind === "text") {
     content = `${instruction}\n\nStudy material:\n"""\n${note.text}\n"""`;
@@ -293,18 +366,59 @@ async function generateFromNote(note, kind) {
   }
 
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, messages: [{ role: "user", content }] }),
-    });
-    const data = await resp.json();
-    const raw = (data.content || []).map((b) => b.text || "").join("").trim();
+    const raw = await callClaudeText(content);
     if (kind === "notes") return { status: "done", data: raw };
     const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
     return { status: "done", data: parsed };
   } catch (err) {
     return { status: "error" };
+  }
+}
+
+async function generateNoteQuiz(note, counts, grade, board) {
+  if (!note || !note.contentKind || note.contentKind === "unsupported") return { status: "unsupported" };
+  if (note.contentKind === "too-large") return { status: "too-large" };
+
+  const parts = [];
+  if (counts.mcq > 0) parts.push(`${counts.mcq} multiple-choice question(s) (1 mark each)`);
+  if (counts.m2 > 0) parts.push(`${counts.m2} two-mark question(s)`);
+  if (counts.m3 > 0) parts.push(`${counts.m3} three-mark question(s)`);
+  if (counts.m4 > 0) parts.push(`${counts.m4} four-mark question(s)`);
+  if (counts.m5 > 0) parts.push(`${counts.m5} five-mark question(s)`);
+
+  if (parts.length === 0) return { status: "error" };
+
+  const instruction = `Create a quiz from this study material for a Class ${grade} ${board} student, with exactly: ${parts.join(", ")}. Respond with ONLY raw JSON, no markdown fences, no other text, as a flat array where each item is EITHER {"type":"mcq","marks":1,"q":"...","options":["...","...","...","..."],"correct":"..."} (the "correct" value must exactly match one of the "options") OR {"type":"subjective","marks":<number>,"q":"...","modelAnswer":"..."}. Order items from lowest to highest marks. Include exactly the counts requested and nothing else.`;
+
+  let content;
+  if (note.contentKind === "text") {
+    content = `${instruction}\n\nStudy material:\n"""\n${note.text}\n"""`;
+  } else {
+    const blockType = note.contentKind === "pdf" ? "document" : "image";
+    content = [
+      { type: blockType, source: { type: "base64", media_type: note.mediaType, data: note.base64 } },
+      { type: "text", text: instruction },
+    ];
+  }
+
+  try {
+    const raw = await callClaudeText(content);
+    const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
+    return { status: "done", data: parsed };
+  } catch (err) {
+    return { status: "error" };
+  }
+}
+
+async function analyzeQuizPerformance(mcqResults, grade, board) {
+  if (mcqResults.length === 0) return null;
+  const lines = mcqResults.map((r, i) => `${i + 1}. "${r.q}" — answered ${r.correct ? "correctly" : "incorrectly"}`).join("\n");
+  const instruction = `A Class ${grade} ${board} student just answered these multiple-choice questions from a study session:\n${lines}\n\nBased on this, identify which specific concepts or sub-topics the student is weak in and which they are strong in. Respond with ONLY raw JSON, no markdown fences, no other text: {"weak": ["concept 1"], "strong": ["concept 1"]}. Keep each concept to a few words, at most 4 items per list. Either list can be empty.`;
+  try {
+    const raw = await callClaudeText(instruction);
+    return JSON.parse(raw.replace(/```json|```/g, "").trim());
+  } catch (err) {
+    return null;
   }
 }
 
@@ -386,16 +500,10 @@ function buildSeedTimeMap() {
   return map;
 }
 
-async function generateDppQuestions(chapterName, topicName) {
-  const instruction = `Create exactly 10 multiple-choice questions on the topic "${topicName}" from the chapter "${chapterName}", suitable for a Class 10 CBSE Mathematics student doing daily practice. Vary difficulty from easy to moderately challenging. Respond with ONLY raw JSON, no markdown fences, no other text, in this exact shape: [{"q":"...","options":["...","...","...","..."],"correct":"..."}] with exactly 10 items. The "correct" value must exactly match one of the strings in "options".`;
+async function generateDppQuestions(chapterName, topicName, grade, board) {
+  const instruction = `Create exactly 10 multiple-choice questions on the topic "${topicName}" from the chapter "${chapterName}", suitable for a Class ${grade} ${board} Mathematics student doing daily practice. Vary difficulty from easy to moderately challenging. Respond with ONLY raw JSON, no markdown fences, no other text, in this exact shape: [{"q":"...","options":["...","...","...","..."],"correct":"..."}] with exactly 10 items. The "correct" value must exactly match one of the strings in "options".`;
   try {
-    const resp = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, messages: [{ role: "user", content: instruction }] }),
-    });
-    const data = await resp.json();
-    const raw = (data.content || []).map((b) => b.text || "").join("").trim();
+    const raw = await callClaudeText(instruction);
     const parsed = JSON.parse(raw.replace(/```json|```/g, "").trim());
     return { status: "done", data: parsed };
   } catch (err) {
@@ -418,6 +526,62 @@ export default function App() {
   const [topicScoresLoaded, setTopicScoresLoaded] = useState(false);
   const [timeSpentMap, setTimeSpentMap] = useState({});
   const [timeLoaded, setTimeLoaded] = useState(false);
+  const [board, setBoard] = useState("CBSE");
+  const [boardLoaded, setBoardLoaded] = useState(false);
+  const [noteMastery, setNoteMastery] = useState({});
+  const [noteMasteryLoaded, setNoteMasteryLoaded] = useState(false);
+
+  // Session-only state (not persisted — fine for a demo, see docs for the
+  // production note on this): formula books & quizzes generated from
+  // uploaded notes, Social Science story progress, and the two "redirect"
+  // flags that make Uploaded Notes actions jump into Explore / DPP.
+  const [uploadedFormulas, setUploadedFormulas] = useState([]);
+  const [noteQuizzes, setNoteQuizzes] = useState([]);
+  const [storyProgress, setStoryProgress] = useState({});
+  const [pendingFormulaOpen, setPendingFormulaOpen] = useState(false);
+  const [pendingDppSelect, setPendingDppSelect] = useState(null);
+
+  // Load / persist the selected board — used whenever content is generated.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await storage.get("cerevia-board");
+        if (!cancelled && result && result.value) setBoard(result.value);
+      } catch (err) {
+        // Default to CBSE.
+      } finally {
+        if (!cancelled) setBoardLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!boardLoaded) return;
+    storage.set("cerevia-board", board).catch(() => {});
+  }, [board, boardLoaded]);
+
+  // Load / persist per-note weak/strong topic analysis from quiz attempts.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await storage.get("cerevia-note-mastery");
+        if (!cancelled && result && result.value) setNoteMastery(JSON.parse(result.value));
+      } catch (err) {
+        // Nothing recorded yet.
+      } finally {
+        if (!cancelled) setNoteMasteryLoaded(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    if (!noteMasteryLoaded) return;
+    storage.set("cerevia-note-mastery", JSON.stringify(noteMastery)).catch(() => {});
+  }, [noteMastery, noteMasteryLoaded]);
 
   // Load any notes saved in a previous session.
   useEffect(() => {
@@ -556,7 +720,7 @@ export default function App() {
       `}</style>
 
       {!currentUser ? (
-        <AuthScreen onAuthed={setCurrentUser} />
+        <AuthScreen onAuthed={setCurrentUser} board={board} setBoard={setBoard} />
       ) : (
         <Dashboard
           user={currentUser}
@@ -566,13 +730,24 @@ export default function App() {
           completedNodes={completedNodes} setCompletedNodes={setCompletedNodes}
           topicScores={topicScores} setTopicScores={setTopicScores}
           timeSpentMap={timeSpentMap}
+          board={board} setBoard={setBoard}
+          noteMastery={noteMastery} setNoteMastery={setNoteMastery}
+          uploadedFormulas={uploadedFormulas} setUploadedFormulas={setUploadedFormulas}
+          noteQuizzes={noteQuizzes} setNoteQuizzes={setNoteQuizzes}
+          storyProgress={storyProgress} setStoryProgress={setStoryProgress}
+          pendingFormulaOpen={pendingFormulaOpen}
+          onFormulaOpened={() => setPendingFormulaOpen(false)}
+          onGoToFormula={() => { setPendingFormulaOpen(true); setPage("explore"); }}
+          pendingDppSelect={pendingDppSelect}
+          onPendingDppHandled={() => setPendingDppSelect(null)}
+          onGoToDpp={(key) => { setPendingDppSelect(key); setPage("dpp"); }}
         />
       )}
     </div>
   );
 }
 
-function AuthScreen({ onAuthed }) {
+function AuthScreen({ onAuthed, board, setBoard }) {
   const [tab, setTab] = useState("login");
   const [loginEmail, setLoginEmail] = useState(DEMO_USER.email);
   const [loginPassword, setLoginPassword] = useState(DEMO_USER.password);
@@ -587,7 +762,7 @@ function AuthScreen({ onAuthed }) {
   const handleLogin = () => {
     if (loginEmail.trim().toLowerCase() === DEMO_USER.email && loginPassword.trim() === DEMO_USER.password) {
       setLoginError("");
-      onAuthed({ name: DEMO_USER.name, cls: DEMO_USER.cls, board: DEMO_USER.board });
+      onAuthed({ name: DEMO_USER.name, cls: DEMO_USER.cls, board });
     } else {
       setLoginError("Invalid email or password.");
     }
@@ -599,7 +774,7 @@ function AuthScreen({ onAuthed }) {
       return;
     }
     setSignupError("");
-    onAuthed({ name: name.trim(), cls, board: "CBSE" });
+    onAuthed({ name: name.trim(), cls, board });
   };
 
   return (
@@ -615,6 +790,11 @@ function AuthScreen({ onAuthed }) {
             <button type="button" className="tab-btn" style={{ ...styles.tabBtn, ...(tab === "login" ? styles.tabBtnActive : {}) }} onClick={() => setTab("login")}>Log in</button>
             <button type="button" className="tab-btn" style={{ ...styles.tabBtn, ...(tab === "signup" ? styles.tabBtnActive : {}) }} onClick={() => setTab("signup")}>Sign up</button>
           </div>
+
+          <label style={styles.label}>Board</label>
+          <select style={styles.input} value={board} onChange={(e) => setBoard(e.target.value)}>
+            {BOARDS.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
 
           {tab === "login" ? (
             <div>
@@ -661,7 +841,12 @@ function AuthScreen({ onAuthed }) {
   );
 }
 
-function Dashboard({ user, page, setPage, onLogout, notes, onUpload, completedNodes, setCompletedNodes, topicScores, setTopicScores, timeSpentMap }) {
+function Dashboard({
+  user, page, setPage, onLogout, notes, onUpload, completedNodes, setCompletedNodes, topicScores, setTopicScores,
+  timeSpentMap, board, setBoard, noteMastery, setNoteMastery,
+  uploadedFormulas, setUploadedFormulas, noteQuizzes, setNoteQuizzes, storyProgress, setStoryProgress,
+  pendingFormulaOpen, onFormulaOpened, onGoToFormula, pendingDppSelect, onPendingDppHandled, onGoToDpp,
+}) {
   const navItems = [
     { id: "explore", label: "Explore" },
     { id: "dpp", label: "DPP" },
@@ -679,9 +864,12 @@ function Dashboard({ user, page, setPage, onLogout, notes, onUpload, completedNo
         <button style={styles.sidebarLogoBtn} onClick={() => setPage("explore")} title="Back to dashboard">CEREVIA</button>
         <div style={styles.userBlock}>
           <div style={styles.avatar}>{user.name.charAt(0).toUpperCase()}</div>
-          <div>
+          <div style={{ flex: 1 }}>
             <p style={styles.userName}>{user.name}</p>
-            <p style={styles.userMeta}>Class {user.cls} · {user.board}</p>
+            <p style={styles.userMeta}>Class {user.cls}</p>
+            <select style={styles.boardSelect} value={board} onChange={(e) => setBoard(e.target.value)}>
+              {BOARDS.map((b) => <option key={b} value={b}>{b}</option>)}
+            </select>
           </div>
         </div>
 
@@ -702,14 +890,34 @@ function Dashboard({ user, page, setPage, onLogout, notes, onUpload, completedNo
       </aside>
 
       <main style={styles.main}>
-        {page === "explore" && <ExplorePage notes={notes} onUpload={onUpload} completedNodes={completedNodes} setCompletedNodes={setCompletedNodes} setTopicScores={setTopicScores} />}
-        {page === "dpp" && <DppPage completedNodes={completedNodes} />}
+        {page === "explore" && (
+          <ExplorePage
+            notes={notes} onUpload={onUpload} completedNodes={completedNodes} setCompletedNodes={setCompletedNodes} setTopicScores={setTopicScores}
+            storyProgress={storyProgress} setStoryProgress={setStoryProgress}
+            uploadedFormulas={uploadedFormulas} pendingFormulaOpen={pendingFormulaOpen} onFormulaOpened={onFormulaOpened}
+          />
+        )}
+        {page === "dpp" && (
+          <DppPage
+            completedNodes={completedNodes} grade={user.cls} board={board}
+            noteQuizzes={noteQuizzes} setNoteMastery={setNoteMastery}
+            pendingSelectKey={pendingDppSelect} onPendingHandled={onPendingDppHandled}
+          />
+        )}
         {page === "assignments" && <AssignmentsPage />}
         {page === "overview" && <OverviewPage topicScores={topicScores} />}
-        {page === "path" && <PersonalizedPathPage topicScores={topicScores} setPage={setPage} />}
+        {page === "path" && <PersonalizedPathPage topicScores={topicScores} setPage={setPage} noteMastery={noteMastery} />}
         {page === "progress" && <ProgressPage timeSpentMap={timeSpentMap} />}
         {page === "quizzes" && <QuizzesPage />}
-        {page === "notes" && <NotesPage notes={notes} onUpload={onUpload} />}
+        {page === "notes" && (
+          <NotesPage
+            notes={notes} onUpload={onUpload} grade={user.cls} board={board}
+            noteMastery={noteMastery} setNoteMastery={setNoteMastery}
+            uploadedFormulas={uploadedFormulas} setUploadedFormulas={setUploadedFormulas}
+            setNoteQuizzes={setNoteQuizzes}
+            onGoToFormula={onGoToFormula} onGoToDpp={onGoToDpp}
+          />
+        )}
       </main>
     </div>
   );
@@ -721,7 +929,7 @@ function Dashboard({ user, page, setPage, onLogout, notes, onUpload, completedNo
 // questions with real AI grading)
 // ---------------------------------------------------------------------------
 
-function ExplorePage({ notes, onUpload, completedNodes, setCompletedNodes, setTopicScores }) {
+function ExplorePage({ notes, onUpload, completedNodes, setCompletedNodes, setTopicScores, storyProgress, setStoryProgress, uploadedFormulas, pendingFormulaOpen, onFormulaOpened }) {
   const [view, setView] = useState("grade");
   const [grade, setGrade] = useState(null);
   const [subject, setSubject] = useState(null);
@@ -735,6 +943,23 @@ function ExplorePage({ notes, onUpload, completedNodes, setCompletedNodes, setTo
   const [reveal, setReveal] = useState(null);
   const [subjIndex, setSubjIndex] = useState(0);
   const [subjAnswers, setSubjAnswers] = useState({});
+
+  // Story mode (Social Science)
+  const [storyChapterId, setStoryChapterId] = useState(null);
+  const [sceneIndex, setSceneIndex] = useState(0);
+  const [storyQuizIndex, setStoryQuizIndex] = useState(0);
+  const [storyQuizAnswers, setStoryQuizAnswers] = useState({});
+
+  // If a formula book was just generated from Uploaded Notes, jump straight
+  // to Explore > Mathematics > chapter grid with the formula panel open.
+  useEffect(() => {
+    if (!pendingFormulaOpen) return;
+    setGrade((g) => g || "10");
+    setSubject("Mathematics");
+    setView("grid");
+    onFormulaOpened();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingFormulaOpen]);
 
   const wrongMcqs = MCQ.filter((q) => mcqAnswers[q.id]?.selected !== q.correct);
   const mcqScoreBefore = MCQ.filter((q) => mcqAnswers[q.id]?.correct).length;
@@ -772,9 +997,71 @@ function ExplorePage({ notes, onUpload, completedNodes, setCompletedNodes, setTo
     <div>
       {view === "grade" && <GradeScreen onSelect={(g) => { setGrade(g); setView("subject"); }} />}
       {view === "subject" && (
-        <SubjectScreen grade={grade} onSelect={(s) => { setSubject(s); if (s === "Mathematics") setView("grid"); }} onBack={() => setView("grade")} />
+        <SubjectScreen
+          grade={grade}
+          onSelect={(s) => {
+            setSubject(s);
+            if (s === "Mathematics") setView("grid");
+            else if (s === "Social Science") setView("socialGrid");
+          }}
+          onBack={() => setView("grade")}
+        />
       )}
-      {view === "grid" && <ChapterGrid grade={grade} notes={notes} onUpload={onUpload} onOpen={(id) => { setChapterId(id); setView("path"); }} onBack={() => setView("subject")} />}
+      {view === "grid" && (
+        <ChapterGrid
+          grade={grade} notes={notes} onUpload={onUpload} uploadedFormulas={uploadedFormulas}
+          openFormulasOnMount={pendingFormulaOpen}
+          onOpen={(id) => { setChapterId(id); setView("path"); }} onBack={() => setView("subject")}
+        />
+      )}
+
+      {view === "socialGrid" && (
+        <SocialScienceGrid
+          progress={storyProgress}
+          onOpen={(id) => {
+            const chapter = SOCIAL_SCIENCE_CHAPTERS.find((c) => c.id === id);
+            if (!chapter.built) return;
+            setStoryChapterId(id);
+            setSceneIndex(0);
+            setView("story");
+          }}
+          onBack={() => setView("subject")}
+        />
+      )}
+      {view === "story" && (
+        <StoryReader
+          sceneIndex={sceneIndex}
+          onNext={() => {
+            if (sceneIndex < NATIONALISM_STORY.length - 1) setSceneIndex(sceneIndex + 1);
+            else { setStoryQuizIndex(0); setStoryQuizAnswers({}); setView("storyQuiz"); }
+          }}
+          onBack={() => setView("socialGrid")}
+        />
+      )}
+      {view === "storyQuiz" && (
+        <StoryQuizScreen
+          index={storyQuizIndex}
+          onAnswer={(q, opt) => {
+            const updated = { ...storyQuizAnswers, [q.id]: opt === q.correct };
+            setStoryQuizAnswers(updated);
+            setTimeout(() => {
+              if (storyQuizIndex < NATIONALISM_QUIZ.length - 1) setStoryQuizIndex(storyQuizIndex + 1);
+              else {
+                const correct = Object.values(updated).filter(Boolean).length;
+                setStoryProgress((prev) => ({ ...prev, [storyChapterId]: { read: true, score: correct, total: NATIONALISM_QUIZ.length } }));
+                setView("storyResults");
+              }
+            }, 300);
+          }}
+        />
+      )}
+      {view === "storyResults" && (
+        <StoryResultsScreen
+          score={storyProgress?.[storyChapterId]?.score ?? Object.values(storyQuizAnswers).filter(Boolean).length}
+          total={NATIONALISM_QUIZ.length}
+          onContinue={() => setView("socialGrid")}
+        />
+      )}
       {view === "path" && (
         <ChapterPath chapterId={chapterId} completed={completedNodes[chapterId] || []} onOpenNode={openNode} onBack={() => setView("grid")} />
       )}
@@ -845,6 +1132,97 @@ function ExplorePage({ notes, onUpload, completedNodes, setCompletedNodes, setTo
   );
 }
 
+function SocialScienceGrid({ progress, onOpen, onBack }) {
+  const [stubMsg, setStubMsg] = useState(null);
+  const books = [...new Set(SOCIAL_SCIENCE_CHAPTERS.map((c) => c.book))];
+
+  return (
+    <div style={styles.wrap}>
+      <button style={styles.backLink} onClick={onBack}>← Change subject</button>
+      <p style={styles.eyebrow}>Social Science · Class 10 · NCERT</p>
+      <h1 style={styles.h1}>Every chapter, told as a story.</h1>
+      <p style={styles.pathHint}>Pick a chapter — each one walks through the events in order, then checks your understanding.</p>
+
+      {books.map((book) => (
+        <div key={book} style={{ marginBottom: 22 }}>
+          <h2 style={styles.subHeading}>{book}</h2>
+          <div style={styles.grid}>
+            {SOCIAL_SCIENCE_CHAPTERS.filter((c) => c.book === book).map((c) => {
+              const done = progress?.[c.id]?.read;
+              return (
+                <button
+                  key={c.id} className="node-btn" style={styles.chapterCard}
+                  onClick={() => { if (!c.built) { setStubMsg(c.name); return; } onOpen(c.id); }}
+                >
+                  <p style={styles.chapterName}>{c.name}</p>
+                  <span style={{ ...styles.pill, color: c.built ? (done ? "#3E7C59" : "#C77D2E") : "#9A9280", borderColor: c.built ? (done ? "#3E7C59" : "#C77D2E") : "#9A9280" }}>
+                    {c.built ? (done ? `Completed — ${progress[c.id].score}/${progress[c.id].total}` : "Ready to read") : "Coming soon"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+
+      {stubMsg && (
+        <div style={styles.calloutBox}>
+          <p style={styles.calloutLabel}>Coming soon</p>
+          <p style={styles.calloutText}>"{stubMsg}" isn't written yet. Try "Nationalism in India" for the full working story.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StoryReader({ sceneIndex, onNext, onBack }) {
+  const scene = NATIONALISM_STORY[sceneIndex];
+  return (
+    <div style={styles.wrap}>
+      <button style={styles.backLink} onClick={onBack}>← Exit story</button>
+      <p style={styles.stepTag}>Nationalism in India · Scene {sceneIndex + 1} of {NATIONALISM_STORY.length}</p>
+      <div style={styles.progressTrack}><div style={{ ...styles.progressFill, width: `${((sceneIndex + 1) / NATIONALISM_STORY.length) * 100}%` }} /></div>
+      <Panel width={680}>
+        <h2 style={styles.h2}>{scene.title}</h2>
+        <p style={styles.body}>{scene.text}</p>
+        <button style={styles.primaryBtn} onClick={onNext}>
+          {sceneIndex < NATIONALISM_STORY.length - 1 ? "Continue the story" : "Check my understanding"}
+        </button>
+      </Panel>
+    </div>
+  );
+}
+
+function StoryQuizScreen({ index, onAnswer }) {
+  const q = NATIONALISM_QUIZ[index];
+  return (
+    <div style={styles.wrap}>
+      <Panel width={620}>
+        <p style={styles.stepTag}>Nationalism in India · Comprehension check · Question {index + 1} of {NATIONALISM_QUIZ.length}</p>
+        <h2 style={styles.h2}>{q.q}</h2>
+        <div style={styles.optionGrid}>
+          {q.options.map((opt) => (
+            <button key={opt} className="opt-btn" style={styles.optBtn} onClick={() => onAnswer(q, opt)}>{opt}</button>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function StoryResultsScreen({ score, total, onContinue }) {
+  return (
+    <div style={styles.wrap}>
+      <Panel width={620}>
+        <p style={styles.stepTag}>Nationalism in India · Results</p>
+        <h2 style={styles.h2}>{score} / {total} correct</h2>
+        <p style={styles.body}>Nice work reading through the chapter. Your result is saved — this chapter now shows as completed on the story grid.</p>
+        <button style={styles.primaryBtn} onClick={onContinue}>Back to chapters</button>
+      </Panel>
+    </div>
+  );
+}
+
 function GradeScreen({ onSelect }) {
   return (
     <div style={styles.wrap}>
@@ -858,22 +1236,44 @@ function GradeScreen({ onSelect }) {
 
 function SubjectScreen({ grade, onSelect, onBack }) {
   const [stub, setStub] = useState(null);
+  const [showLanguages, setShowLanguages] = useState(false);
+
+  const handleClick = (s) => {
+    if (s === "Regional Language") { setShowLanguages((v) => !v); setStub(null); return; }
+    setShowLanguages(false);
+    if (s !== "Mathematics" && s !== "Social Science") setStub(s);
+    else setStub(null);
+    onSelect(s);
+  };
+
   return (
     <div style={styles.wrap}>
       <button style={styles.backLink} onClick={onBack}>← Change class</button>
       <h1 style={styles.simpleH1}>Class {grade} — pick a subject</h1>
       <div style={styles.plainBtnRow}>
         {SUBJECTS.map((s) => (
-          <button key={s} style={styles.plainBtn} onClick={() => { if (s !== "Mathematics") setStub(s); onSelect(s); }}>{s}</button>
+          <button key={s} style={styles.plainBtn} onClick={() => handleClick(s)}>{s}</button>
         ))}
       </div>
-      {stub && <p style={styles.stubLine}>{stub} content isn't built yet — try Mathematics for the working demo.</p>}
+
+      {showLanguages && (
+        <div style={{ marginTop: 16 }}>
+          <p style={styles.stepTag}>Choose a language</p>
+          <div style={styles.plainBtnRow}>
+            {REGIONAL_LANGUAGES.map((l) => (
+              <button key={l} style={styles.plainBtn} onClick={() => setStub(l)}>{l}</button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {stub && <p style={styles.stubLine}>{stub} content isn't built yet — try Mathematics or Social Science for the working demo.</p>}
     </div>
   );
 }
 
-function ChapterGrid({ grade, notes, onUpload, onOpen, onBack }) {
-  const [showFormulas, setShowFormulas] = useState(false);
+function ChapterGrid({ grade, notes, onUpload, uploadedFormulas, openFormulasOnMount, onOpen, onBack }) {
+  const [showFormulas, setShowFormulas] = useState(!!openFormulasOnMount);
   const [showNotes, setShowNotes] = useState(false);
 
   return (
@@ -913,15 +1313,33 @@ function ChapterGrid({ grade, notes, onUpload, onOpen, onBack }) {
       {showNotes && <p style={styles.stubLine}>Also visible in "Uploaded Notes" on the sidebar — same list, either place you add from.</p>}
 
       {showFormulas && (
-        <div style={styles.formulaGrid}>
-          {CHAPTERS.map((c) => (
-            <div key={c.id} style={styles.formulaCard}>
-              <p style={styles.formulaChapterName}>{c.name}</p>
-              <ul style={styles.formulaList}>
-                {FORMULA_SHEET[c.id].map((f, i) => <li key={i} style={styles.formulaItem}>{f}</li>)}
-              </ul>
-            </div>
-          ))}
+        <div>
+          {uploadedFormulas && uploadedFormulas.length > 0 && (
+            <>
+              <p style={styles.stepTag}>From your uploads</p>
+              <div style={styles.formulaGrid}>
+                {uploadedFormulas.map((f) => (
+                  <div key={f.id} style={{ ...styles.formulaCard, borderColor: "#C77D2E" }}>
+                    <p style={styles.formulaChapterName}>{f.sourceName}</p>
+                    <ul style={styles.formulaList}>
+                      {f.items.map((item, i) => <li key={i} style={styles.formulaItem}>{item}</li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+              <p style={{ ...styles.stepTag, marginTop: 18 }}>By chapter</p>
+            </>
+          )}
+          <div style={styles.formulaGrid}>
+            {CHAPTERS.map((c) => (
+              <div key={c.id} style={styles.formulaCard}>
+                <p style={styles.formulaChapterName}>{c.name}</p>
+                <ul style={styles.formulaList}>
+                  {FORMULA_SHEET[c.id].map((f, i) => <li key={i} style={styles.formulaItem}>{f}</li>)}
+                </ul>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -1150,19 +1568,66 @@ function SubjectiveRunner({ index, answers, setAnswers, onNext, onExit }) {
 
 function SubjectiveBlock({ value, onChange }) {
   const mode = value?.mode || "text";
+  const [isRecording, setIsRecording] = useState(false);
+  const recognitionRef = useRef(null);
+  const SpeechRecognitionAPI = typeof window !== "undefined" ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null;
+
   const handleFile = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     onChange({ mode: "image", file, fileName: file.name, previewUrl: URL.createObjectURL(file) });
   };
+
+  const toggleRecording = () => {
+    if (isRecording) {
+      recognitionRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+    if (!SpeechRecognitionAPI) return;
+    const recognition = new SpeechRecognitionAPI();
+    recognition.lang = "en-IN";
+    recognition.continuous = true;
+    recognition.interimResults = false;
+    let baseText = mode === "text" ? (value?.text || "") : "";
+    recognition.onresult = (e) => {
+      let finalTranscript = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) {
+        if (e.results[i].isFinal) finalTranscript += e.results[i][0].transcript;
+      }
+      if (finalTranscript.trim()) {
+        baseText = (baseText ? baseText + " " : "") + finalTranscript.trim();
+        onChange({ mode: "text", text: baseText });
+      }
+    };
+    recognition.onend = () => setIsRecording(false);
+    recognition.onerror = () => setIsRecording(false);
+    recognitionRef.current = recognition;
+    if (mode !== "text") onChange({ mode: "text", text: baseText });
+    recognition.start();
+    setIsRecording(true);
+  };
+
   return (
     <div>
       <div style={styles.toggleRow}>
         <button style={{ ...styles.toggleBtn, ...(mode === "text" ? styles.toggleBtnActive : {}) }} onClick={() => onChange({ mode: "text", text: value?.text || "" })}>Type answer</button>
         <button style={{ ...styles.toggleBtn, ...(mode === "image" ? styles.toggleBtnActive : {}) }} onClick={() => onChange({ mode: "image", fileName: value?.fileName, previewUrl: value?.previewUrl, file: value?.file })}>Upload photo</button>
+        {SpeechRecognitionAPI && (
+          <button
+            style={{ ...styles.toggleBtn, ...(isRecording ? { background: "#B4472A", color: "#fff", borderColor: "#B4472A" } : {}) }}
+            onClick={toggleRecording}
+          >
+            {isRecording ? "⏹ Stop recording" : "🎤 Speak answer"}
+          </button>
+        )}
       </div>
       {mode === "text" && (
-        <textarea style={styles.textarea} rows={5} placeholder="Write your working and final answer here..." value={value?.text || ""} onChange={(e) => onChange({ mode: "text", text: e.target.value })} />
+        <>
+          <textarea style={styles.textarea} rows={5} placeholder="Write your working and final answer here, or use Speak answer..." value={value?.text || ""} onChange={(e) => onChange({ mode: "text", text: e.target.value })} />
+          {isRecording && <p style={styles.stubLine}>🔴 Listening — speak your answer, then click "Stop recording."</p>}
+          {!SpeechRecognitionAPI && <p style={styles.stubLine}>Speech-to-text isn't supported in this browser — try Chrome.</p>}
+        </>
       )}
       {mode === "image" && (
         <div>
@@ -1250,7 +1715,7 @@ function ResultsScreen({ mcqBefore, mcqAfter, subjAnswers, onContinue }) {
 // student has completed in Explore. Cached per topic per day.
 // ---------------------------------------------------------------------------
 
-function DppPage({ completedNodes }) {
+function DppPage({ completedNodes, grade, board, noteQuizzes, setNoteMastery, pendingSelectKey, onPendingHandled }) {
   const completedTopics = [];
   Object.keys(completedNodes).forEach((chapterId) => {
     const chapterName = CHAPTERS.find((c) => c.id === chapterId)?.name;
@@ -1260,16 +1725,27 @@ function DppPage({ completedNodes }) {
     });
   });
 
-  const [selectedKey, setSelectedKey] = useState(completedTopics[0]?.key || "");
+  const noteOptions = (noteQuizzes || []).map((nq) => ({ key: `note::${nq.id}`, label: `${nq.noteName} (from your notes)`, noteQuiz: nq }));
+
+  const [selectedKey, setSelectedKey] = useState(completedTopics[0]?.key || noteOptions[0]?.key || "");
   const [result, setResult] = useState(null);
   const [answers, setAnswers] = useState({});
 
-  const selected = completedTopics.find((t) => t.key === selectedKey);
+  useEffect(() => {
+    if (pendingSelectKey) {
+      setSelectedKey(pendingSelectKey);
+      onPendingHandled();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingSelectKey]);
+
+  const selectedTopic = completedTopics.find((t) => t.key === selectedKey);
+  const selectedNoteQuiz = noteOptions.find((o) => o.key === selectedKey)?.noteQuiz;
 
   useEffect(() => {
-    if (!selected) { setResult(null); return; }
+    if (!selectedTopic) { setResult(null); return; }
     let cancelled = false;
-    const storageKey = `cerevia-dpp-${selected.key}-${todayKey()}`;
+    const storageKey = `cerevia-dpp-${selectedTopic.key}-${todayKey()}`;
     setAnswers({});
     (async () => {
       setResult({ status: "loading" });
@@ -1282,7 +1758,7 @@ function DppPage({ completedNodes }) {
       } catch (err) {
         // nothing generated for today yet
       }
-      const generated = await generateDppQuestions(selected.chapterName, selected.nodeName);
+      const generated = await generateDppQuestions(selectedTopic.chapterName, selectedTopic.nodeName, grade, board);
       if (!cancelled) setResult(generated);
       if (generated.status === "done") {
         storage.set(storageKey, JSON.stringify(generated)).catch(() => {});
@@ -1294,38 +1770,51 @@ function DppPage({ completedNodes }) {
 
   const answeredCount = Object.keys(answers).length;
   const correctCount = Object.values(answers).filter(Boolean).length;
+  const hasAnyOptions = completedTopics.length > 0 || noteOptions.length > 0;
 
   return (
     <div>
       <h1 style={styles.pageH1}>Daily Practice Problems</h1>
-      <p style={styles.pageSub}>10 fresh MCQs a day, on a topic you've already completed. Same set all day, new set tomorrow.</p>
+      <p style={styles.pageSub}>10 fresh MCQs a day on a completed topic, plus any quizzes generated from your own uploaded notes.</p>
 
-      {completedTopics.length === 0 ? (
+      {!hasAnyOptions ? (
         <div style={styles.calloutBox}>
           <p style={styles.calloutLabel}>Nothing to practice yet</p>
-          <p style={styles.calloutText}>Complete a topic in Explore first — DPP draws from what you've already learned.</p>
+          <p style={styles.calloutText}>Complete a topic in Explore, or generate a quiz from Uploaded Notes — both show up here.</p>
         </div>
       ) : (
         <>
           <select style={styles.dropdown} value={selectedKey} onChange={(e) => setSelectedKey(e.target.value)}>
-            {completedTopics.map((t) => (
-              <option key={t.key} value={t.key}>{t.chapterName} — {t.nodeName}</option>
-            ))}
+            {completedTopics.map((t) => <option key={t.key} value={t.key}>{t.chapterName} — {t.nodeName}</option>)}
+            {noteOptions.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
           </select>
 
-          {result?.status === "loading" && <p style={styles.stubLine}>Putting together today's 10 questions…</p>}
-          {result?.status === "error" && <p style={styles.stubLine}>Couldn't generate today's set — try switching topics and back.</p>}
-          {result?.status === "done" && (
-            <div>
-              <p style={styles.dppScore}>Score: {correctCount} / {answeredCount} answered correctly ({answeredCount}/10 attempted)</p>
-              {result.data.map((q, i) => (
-                <DppQuestionItem
-                  key={i} index={i} question={q}
-                  selected={answers[i]}
-                  onSelect={(opt) => setAnswers((prev) => ({ ...prev, [i]: opt === q.correct }))}
-                />
-              ))}
-            </div>
+          {selectedNoteQuiz && (
+            <NoteQuizPlayer
+              key={selectedNoteQuiz.id}
+              quizData={selectedNoteQuiz.data}
+              grade={grade} board={board}
+              onSaveMastery={(analysis, score) => setNoteMastery((prev) => ({ ...prev, [selectedNoteQuiz.noteId]: { ...analysis, lastScore: score, updatedAt: "Just now" } }))}
+            />
+          )}
+
+          {selectedTopic && (
+            <>
+              {result?.status === "loading" && <p style={styles.stubLine}>Putting together today's 10 questions…</p>}
+              {result?.status === "error" && <p style={styles.stubLine}>Couldn't generate today's set — try switching topics and back.</p>}
+              {result?.status === "done" && (
+                <div>
+                  <p style={styles.dppScore}>Score: {correctCount} / {answeredCount} answered correctly ({answeredCount}/10 attempted)</p>
+                  {result.data.map((q, i) => (
+                    <DppQuestionItem
+                      key={i} index={i} question={q}
+                      selected={answers[i]}
+                      onSelect={(opt) => setAnswers((prev) => ({ ...prev, [i]: opt === q.correct }))}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </>
       )}
@@ -1511,7 +2000,7 @@ function StatCard({ label, value, sub }) {
   );
 }
 
-function PersonalizedPathPage({ topicScores, setPage }) {
+function PersonalizedPathPage({ topicScores, setPage, noteMastery }) {
   const [chapterId, setChapterId] = useState(CHAPTERS[0].id);
   const topics = CHAPTER_PATHS[chapterId]
     .map((t) => ({ ...t, mastery: getTopicMastery(topicScores, chapterId, t.id, t.mastery) }))
@@ -1519,10 +2008,25 @@ function PersonalizedPathPage({ topicScores, setPage }) {
   const totalHours = topics.reduce((s, t) => s + estimateHours(t.mastery), 0);
   const chapterName = CHAPTERS.find((c) => c.id === chapterId)?.name;
 
+  const noteWeakSet = new Set();
+  const noteStrongSet = new Set();
+  Object.values(noteMastery || {}).forEach((m) => {
+    (m.weak || []).forEach((w) => noteWeakSet.add(w));
+    (m.strong || []).forEach((s) => noteStrongSet.add(s));
+  });
+
   return (
     <div>
       <h1 style={styles.pageH1}>Personalized learning path</h1>
       <p style={styles.pageSub}>Weakest topics first, with an honest time estimate to master each one.</p>
+
+      {noteWeakSet.size > 0 && (
+        <div style={styles.calloutBox}>
+          <p style={styles.calloutLabel}>From your uploaded-notes quizzes</p>
+          <p style={styles.calloutText}>Focus next on: {Array.from(noteWeakSet).join(", ")}</p>
+          {noteStrongSet.size > 0 && <p style={styles.calloutText}>Already solid: {Array.from(noteStrongSet).join(", ")}</p>}
+        </div>
+      )}
 
       <select style={styles.dropdown} value={chapterId} onChange={(e) => setChapterId(e.target.value)}>
         {CHAPTERS.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
@@ -1586,59 +2090,28 @@ function StatusPill({ status }) {
   return <span style={{ ...styles.pill, color, borderColor: color }}>{status}</span>;
 }
 
-function NotesPage({ notes, onUpload }) {
+function NotesPage({ notes, onUpload, grade, board, noteMastery, setNoteMastery, uploadedFormulas, setUploadedFormulas, setNoteQuizzes, onGoToFormula, onGoToDpp }) {
   const [openIndex, setOpenIndex] = useState(null);
   const [activeKind, setActiveKind] = useState("notes");
-  const [cache, setCache] = useState({});
+  const [formulaStatus, setFormulaStatus] = useState(null); // null | "loading" | "error"
 
-  useEffect(() => {
-    if (openIndex === null) return;
+  const openNoteId = openIndex !== null ? (notes[openIndex].id || `idx-${openIndex}`) : null;
+  const mastery = openNoteId ? noteMastery[openNoteId] : null;
+
+  const handleFormulaClick = async () => {
     const note = notes[openIndex];
-    const noteKey = note.id || `idx-${openIndex}`;
-    const cacheKey = `${noteKey}-${activeKind}`;
-    if (cache[cacheKey]) return;
-
-    let cancelled = false;
-    (async () => {
-      setCache((prev) => ({ ...prev, [cacheKey]: { status: "loading" } }));
-
-      // Check for a previously generated + saved result first.
-      try {
-        const stored = await storage.get(`cerevia-gen-${cacheKey}`);
-        if (stored && stored.value) {
-          const parsed = JSON.parse(stored.value);
-          if (!cancelled) setCache((prev) => ({ ...prev, [cacheKey]: parsed }));
-          return;
-        }
-      } catch (err) {
-        // nothing saved yet — generate fresh below
-      }
-
-      const result = await generateFromNote(note, activeKind);
-      if (!cancelled) setCache((prev) => ({ ...prev, [cacheKey]: result }));
-      if (result.status === "done") {
-        storage.set(`cerevia-gen-${cacheKey}`, JSON.stringify(result)).catch(() => {});
-      }
-    })();
-    return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [openIndex, activeKind]);
-
-  const regenerate = () => {
-    const note = notes[openIndex];
-    const noteKey = note.id || `idx-${openIndex}`;
-    const cacheKey = `${noteKey}-${activeKind}`;
-    setCache((prev) => { const c = { ...prev }; delete c[cacheKey]; return c; });
-    storage.delete(`cerevia-gen-${cacheKey}`).catch(() => {});
+    setFormulaStatus("loading");
+    const result = await generateFromNote(note, "formula", grade, board);
+    if (result.status !== "done") { setFormulaStatus("error"); return; }
+    setUploadedFormulas((prev) => [{ id: `${openNoteId}-${Date.now()}`, sourceName: note.name, items: result.data }, ...prev]);
+    setFormulaStatus(null);
+    onGoToFormula(); // jumps to Explore > Mathematics with the formula panel open
   };
-
-  const activeKey = openIndex !== null ? (notes[openIndex].id || `idx-${openIndex}`) + "-" + activeKind : null;
-  const activeResult = activeKey ? cache[activeKey] : null;
 
   return (
     <div>
       <h1 style={styles.pageH1}>Uploaded notes</h1>
-      <p style={styles.pageSub}>Your own study material, in one place — turn any file into notes, a quiz, or a formula sheet.</p>
+      <p style={styles.pageSub}>Your own study material, in one place — open the PDF, turn it into a quiz, or pull out a formula sheet.</p>
 
       <label className="file-label" style={styles.uploadCard}>
         Upload a new file
@@ -1654,9 +2127,9 @@ function NotesPage({ notes, onUpload }) {
             <span style={{ ...styles.td, flex: 0.8, textAlign: "right" }}>
               <button
                 style={styles.openBtn}
-                onClick={() => { setOpenIndex(i); setActiveKind("notes"); }}
+                onClick={() => { setOpenIndex(i); setActiveKind("notes"); setFormulaStatus(null); }}
               >
-                {openIndex === i ? "Open" : "Open"}
+                Open
               </button>
             </span>
           </div>
@@ -1667,20 +2140,53 @@ function NotesPage({ notes, onUpload }) {
         <div style={styles.workspaceCard}>
           <div style={styles.workspaceHeader}>
             <div>
-              <p style={styles.workspaceEyebrow}>Generated from</p>
-              <p style={styles.workspaceTitle}>{notes[openIndex].name}</p>
+              <p style={styles.workspaceEyebrow}>{notes[openIndex].name}</p>
+              <p style={styles.workspaceTitle}>What do you want to do with it?</p>
             </div>
             <button style={styles.closeBtn} onClick={() => setOpenIndex(null)}>Close</button>
           </div>
 
           <select style={styles.dropdown} value={activeKind} onChange={(e) => setActiveKind(e.target.value)}>
-            <option value="notes">Notes</option>
-            <option value="quiz">Quiz</option>
-            <option value="formula">Formula Book</option>
+            <option value="notes">Notes (open the PDF)</option>
+            <option value="quiz">Quiz (sends to DPP)</option>
+            <option value="formula">Formula Book (sends to Explore)</option>
           </select>
 
+          {mastery && (mastery.weak?.length > 0 || mastery.strong?.length > 0) && (
+            <p style={styles.masteryHint}>
+              From your last quiz on this file — {mastery.strong?.length > 0 && <>strong in <b>{mastery.strong.join(", ")}</b>. </>}
+              {mastery.weak?.length > 0 && <>Still weak in <b>{mastery.weak.join(", ")}</b>.</>}
+            </p>
+          )}
+
           <div style={styles.workspaceBody}>
-            <GeneratedContent kind={activeKind} result={activeResult} onRetry={regenerate} />
+            {activeKind === "notes" && <NoteFileViewer note={notes[openIndex]} />}
+
+            {activeKind === "quiz" && (
+              <NoteQuizWorkspace
+                key={openNoteId}
+                note={notes[openIndex]}
+                grade={grade} board={board}
+                onQuizReady={(quizData) => {
+                  const id = `${openNoteId}-${Date.now()}`;
+                  setNoteQuizzes((prev) => [{ id, noteId: openNoteId, noteName: notes[openIndex].name, data: quizData }, ...prev]);
+                  onGoToDpp(`note::${id}`);
+                }}
+              />
+            )}
+
+            {activeKind === "formula" && (
+              <div>
+                {formulaStatus === "loading" && <p style={styles.stubLine}>Reading the file and pulling out formulas…</p>}
+                {formulaStatus === "error" && <p style={styles.stubLine}>Couldn't generate that right now — try again.</p>}
+                {!formulaStatus && (
+                  <div>
+                    <p style={styles.body}>Generates a formula sheet from this file and takes you straight to Explore → Mathematics, where it appears under "From your uploads."</p>
+                    <button style={{ ...styles.primaryBtn, width: "auto", padding: "12px 26px" }} onClick={handleFormulaClick}>Generate & open in Explore</button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1688,63 +2194,157 @@ function NotesPage({ notes, onUpload }) {
   );
 }
 
-function GeneratedContent({ kind, result, onRetry }) {
-  if (!result || result.status === "loading") {
-    return <p style={styles.stubLine}>Reading the file and generating your {kind === "formula" ? "formula book" : kind}…</p>;
+function NoteFileViewer({ note }) {
+  if (!note.contentKind || note.contentKind === "unsupported") {
+    return <p style={styles.stubLine}>Preview isn't available for this file type — try a PDF, image, or plain text file.</p>;
   }
-  if (result.status === "unsupported") {
-    return <p style={styles.stubLine}>This file type isn't readable for AI generation yet — try uploading a PDF, image, or plain text (.txt/.md) file.</p>;
+  if (note.contentKind === "too-large") {
+    return <p style={styles.stubLine}>This file is over the 4 MB demo limit.</p>;
   }
-  if (result.status === "too-large") {
-    return <p style={styles.stubLine}>This file is over the 4 MB demo limit — try a smaller file.</p>;
+  if (note.contentKind === "pdf") {
+    return <iframe title={note.name} src={`data:application/pdf;base64,${note.base64}`} style={styles.pdfFrame} />;
   }
-  if (result.status === "error") {
-    return (
-      <div>
-        <p style={styles.stubLine}>Couldn't generate that right now.</p>
-        <button style={styles.openBtn} onClick={onRetry}>Try again</button>
-      </div>
-    );
+  if (note.contentKind === "image") {
+    return <img src={`data:${note.mediaType};base64,${note.base64}`} alt={note.name} style={styles.imgPreview} />;
   }
+  return <pre style={styles.notePreviewText}>{note.text}</pre>;
+}
 
-  const body =
-    kind === "notes" ? (
-      <div>{result.data.split("\n").filter((line) => line.trim()).map((line, i) => <p key={i} style={styles.genParagraph}>{line}</p>)}</div>
-    ) : kind === "formula" ? (
-      <ul style={styles.genFormulaList}>{result.data.map((f, i) => <li key={i} style={styles.genFormulaItem}>{f}</li>)}</ul>
-    ) : (
-      <div>{result.data.map((q, i) => <QuizPreviewItem key={i} index={i} question={q} />)}</div>
-    );
+// Setup-only now: picks question counts, generates the quiz, then hands it
+// off to DPP where it's actually taken. Keeps "configure" and "take"
+// cleanly separate.
+function NoteQuizWorkspace({ note, grade, board, onQuizReady }) {
+  const [phase, setPhase] = useState("setup"); // setup | loading | error
+  const [counts, setCounts] = useState({ mcq: 5, m2: 1, m3: 1, m4: 0, m5: 0 });
+  const totalCount = counts.mcq + counts.m2 + counts.m3 + counts.m4 + counts.m5;
+
+  const handleGenerate = async () => {
+    setPhase("loading");
+    const result = await generateNoteQuiz(note, counts, grade, board);
+    if (result.status !== "done") { setPhase("error"); return; }
+    onQuizReady(result.data);
+  };
+
+  if (phase === "loading") return <p style={styles.stubLine}>Reading the file and building your quiz…</p>;
 
   return (
     <div>
-      {body}
-      <button style={{ ...styles.openBtn, marginTop: 8 }} onClick={onRetry}>Regenerate</button>
+      <p style={styles.quizSetupIntro}>How many of each question type?</p>
+      {[
+        ["mcq", "MCQs (1 mark)"],
+        ["m2", "2-mark questions"],
+        ["m3", "3-mark questions"],
+        ["m4", "4-mark questions"],
+        ["m5", "5-mark questions"],
+      ].map(([key, label]) => (
+        <div key={key} style={styles.countRow}>
+          <span style={styles.countLabel}>{label}</span>
+          <input
+            type="number" min={0} max={10} style={styles.countInput}
+            value={counts[key]}
+            onChange={(e) => setCounts((prev) => ({ ...prev, [key]: Math.max(0, Math.min(10, Number(e.target.value) || 0)) }))}
+          />
+        </div>
+      ))}
+      {phase === "error" && <p style={styles.stubLine}>Couldn't generate that right now — try again.</p>}
+      <button style={{ ...styles.primaryBtn, width: "auto", padding: "12px 26px", opacity: totalCount > 0 ? 1 : 0.4 }} disabled={totalCount === 0} onClick={handleGenerate}>
+        Generate quiz → sends it to DPP
+      </button>
     </div>
   );
 }
 
-function QuizPreviewItem({ index, question }) {
-  const [selected, setSelected] = useState(null);
+// Takes an already-generated mixed MCQ/written quiz and lets the student
+// actually answer it, then (for MCQs) runs the weak/strong analysis. Used
+// from DPP for both topic-based and uploaded-note-based daily quizzes.
+function NoteQuizPlayer({ quizData, grade, board, onSaveMastery }) {
+  const [mcqAnswers, setMcqAnswers] = useState({});
+  const [revealed, setRevealed] = useState({});
+  const [done, setDone] = useState(false);
+  const [analysis, setAnalysis] = useState(null);
+  const [analyzing, setAnalyzing] = useState(false);
+
+  const mcqAnswered = quizData.filter((q, i) => q.type === "mcq" && mcqAnswers[i] !== undefined).length;
+  const mcqTotal = quizData.filter((q) => q.type === "mcq").length;
+
+  const handleFinish = async () => {
+    const mcqResults = quizData
+      .map((q, i) => ({ q, i }))
+      .filter(({ q }) => q.type === "mcq")
+      .map(({ q, i }) => ({ q: q.q, correct: mcqAnswers[i] === q.correct }));
+
+    setAnalyzing(true);
+    const result = mcqResults.length > 0 ? await analyzeQuizPerformance(mcqResults, grade, board) : null;
+    setAnalyzing(false);
+    setAnalysis(result);
+
+    const correctCount = mcqResults.filter((r) => r.correct).length;
+    const scoreLabel = mcqResults.length > 0 ? `${correctCount}/${mcqResults.length} MCQs correct` : "Self-checked";
+    if (result) onSaveMastery(result, scoreLabel);
+    setDone(true);
+  };
+
   return (
-    <div style={styles.genQuizItem}>
-      <p style={styles.genQuizQ}>{index + 1}. {question.q}</p>
-      <div style={styles.optionGrid}>
-        {question.options.map((opt) => {
-          const isChosen = selected === opt;
-          const showCorrect = selected && opt === question.correct;
-          return (
-            <button
-              key={opt} className="opt-btn"
-              style={{ ...styles.optBtn, borderColor: showCorrect ? "#3E7C59" : isChosen ? "#B4472A" : "#DAD4C4", background: showCorrect ? "#EDF4EE" : isChosen && opt !== question.correct ? "#FBEDE8" : "#fff" }}
-              onClick={() => setSelected(opt)}
-            >{opt}</button>
-          );
-        })}
-      </div>
+    <div>
+      {quizData.map((q, i) => (
+        q.type === "mcq" ? (
+          <div key={i} style={styles.genQuizItem}>
+            <p style={styles.genQuizQ}>{i + 1}. {q.q} <span style={styles.marksTag}>({q.marks} mark)</span></p>
+            <div style={styles.optionGrid}>
+              {q.options.map((opt) => {
+                const isChosen = mcqAnswers[i] === opt;
+                const showCorrect = mcqAnswers[i] !== undefined && opt === q.correct;
+                return (
+                  <button
+                    key={opt} className="opt-btn" disabled={done}
+                    style={{ ...styles.optBtn, borderColor: showCorrect ? "#3E7C59" : isChosen ? "#B4472A" : "#DAD4C4", background: showCorrect ? "#EDF4EE" : isChosen && opt !== q.correct ? "#FBEDE8" : "#fff" }}
+                    onClick={() => setMcqAnswers((prev) => ({ ...prev, [i]: opt }))}
+                  >{opt}</button>
+                );
+              })}
+            </div>
+          </div>
+        ) : (
+          <div key={i} style={styles.genQuizItem}>
+            <p style={styles.genQuizQ}>{i + 1}. {q.q} <span style={styles.marksTag}>({q.marks} marks)</span></p>
+            {revealed[i] ? (
+              <p style={styles.genParagraph}>{q.modelAnswer}</p>
+            ) : (
+              <button style={styles.ghostBtn} onClick={() => setRevealed((prev) => ({ ...prev, [i]: true }))}>Show model answer</button>
+            )}
+          </div>
+        )
+      ))}
+
+      {!done && (
+        <button style={{ ...styles.primaryBtn, width: "auto", padding: "12px 26px" }} onClick={handleFinish} disabled={analyzing}>
+          {analyzing ? "Analyzing your answers…" : `Finish quiz (${mcqAnswered}/${mcqTotal} MCQs answered)`}
+        </button>
+      )}
+
+      {done && (
+        <div style={styles.calloutBox}>
+          <p style={styles.calloutLabel}>Results</p>
+          {mcqTotal > 0 && <p style={styles.calloutText}>{quizData.filter((q, i) => q.type === "mcq" && mcqAnswers[i] === q.correct).length}/{mcqTotal} MCQs correct.</p>}
+          {analysis ? (
+            <>
+              {analysis.strong?.length > 0 && <p style={styles.calloutText}>Strong in: {analysis.strong.join(", ")}</p>}
+              {analysis.weak?.length > 0 && <p style={styles.calloutText}>Focus next on: {analysis.weak.join(", ")}</p>}
+              <p style={styles.bodyMuted}>This has been saved to your personalized recommendations.</p>
+            </>
+          ) : (
+            <p style={styles.calloutText}>Nice work reviewing! Add a few MCQs next time to get personalized weak/strong feedback.</p>
+          )}
+        </div>
+      )}
     </div>
   );
 }
+
+// Note: the old GeneratedContent/QuizPreviewItem components (AI-generated
+// notes text + inline quiz preview) were removed here — "Notes" now opens
+// the real uploaded file (see NoteFileViewer) and "Quiz" now redirects into
+// DPP (see NoteQuizWorkspace + NoteQuizPlayer) instead of rendering inline.
 
 // ---------------------------------------------------------------------------
 // Styles
@@ -1808,6 +2408,8 @@ const styles = {
 
   openBtn: { padding: "5px 12px", fontSize: 12.5, border: "1px solid #1E2A4A", color: "#1E2A4A", background: "#fff", fontWeight: 500 },
   workspaceCard: { background: "#fff", border: "1px solid #E4DFD3", marginTop: 20, padding: "22px 24px" },
+  pdfFrame: { width: "100%", height: 480, border: "1px solid #E4DFD3" },
+  notePreviewText: { whiteSpace: "pre-wrap", fontSize: 13.5, lineHeight: 1.6, color: "#3A3527", background: "#FBF9F4", border: "1px solid #E4DFD3", padding: 16, maxHeight: 480, overflowY: "auto" },
   workspaceHeader: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16 },
   workspaceEyebrow: { fontSize: 12, color: "#9A9280", margin: "0 0 2px" },
   workspaceTitle: { fontSize: 15.5, fontWeight: 600, margin: 0, color: "#1E2A4A" },
@@ -1838,6 +2440,14 @@ const styles = {
   genQuizItem: { marginBottom: 22 },
   genQuizQ: { fontSize: 14.5, fontWeight: 600, color: "#1E2A4A", margin: "0 0 10px" },
   dppScore: { fontSize: 13.5, fontWeight: 600, color: "#1E2A4A", background: "#FBF6EC", border: "1px solid #E4DFD3", padding: "8px 14px", display: "inline-block", marginBottom: 18 },
+
+  boardSelect: { fontSize: 11.5, color: "#B9C0D4", background: "transparent", border: "1px solid rgba(246,243,237,0.25)", padding: "2px 4px", marginTop: 3, width: "100%" },
+  masteryHint: { fontSize: 12.5, color: "#6B6558", background: "#FBF9F4", border: "1px solid #E4DFD3", padding: "9px 12px", margin: "0 0 16px" },
+  quizSetupIntro: { fontSize: 14, fontWeight: 500, color: "#1E2A4A", margin: "0 0 12px" },
+  countRow: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: "1px solid #EDE9DE" },
+  countLabel: { fontSize: 14, color: "#3A3527" },
+  countInput: { width: 60, padding: "6px 8px", fontSize: 14, border: "1px solid #DAD4C4", textAlign: "center" },
+  marksTag: { fontSize: 12, color: "#9A9280", fontWeight: 500 },
 
   wrap: { maxWidth: 760, margin: "0 auto" },
   eyebrow: { fontSize: 12.5, color: "#9A9280", margin: "0 0 4px" },
